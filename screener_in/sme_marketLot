@@ -1,0 +1,69 @@
+// ==UserScript==
+// @name         Screener SME Lot Size/Value Toggle
+// @namespace    ExploringStox
+// @version      1.2
+// @description  Toggles on click between Market Lot Size and Price for one Lot of SME Stocks
+// @match        https://www.screener.in/company/*
+// @grant        GM.xmlHttpRequest
+// @connect      api.kite.trade
+// ==/UserScript==
+
+(function() {
+    'use strict';
+    const stockSymbol = window.location.href.match(/\/company\/([^\/]+)/)?.[1]?.toUpperCase() || '';
+    const ratioList = document.querySelector('ul#top-ratios');
+
+    function fetchLotSize(symbol, exchange) {
+        return new Promise((resolve, reject) => {
+            GM.xmlHttpRequest({
+                method: "GET",
+                url: `https://api.kite.trade/instruments/${exchange}`,
+                onload: r => {
+                    const csv = r.responseText.trim().split('\n');
+                    const symIdx = exchange === 'NSE' ? csv[0].split(',').indexOf('tradingsymbol') : 1;
+                    const lotIdx = exchange === 'NSE' ? csv[0].split(',').indexOf('lot_size') : 8;
+                    const row = csv.slice(1).find(row => row.split(',')[symIdx]?.match(new RegExp(`^${symbol}${exchange === 'NSE' ? '-(SM|ST)' : ''}$`, 'i')));
+                    resolve(row ? row.split(',')[lotIdx] : null);
+                },
+                onerror: reject
+            });
+        });
+    }
+
+    function toggleDisplay(lotSize) {
+        if (!lotSize) return;
+        const currentPriceLi = Array.from(ratioList.children).find(li => li.querySelector('span.name')?.textContent.includes("Current Price"));
+        if (currentPriceLi) {
+            const priceText = currentPriceLi.querySelector('.number').textContent.replace(/₹|,/g, '').trim();
+            const price = parseFloat(priceText);
+            const validLotSize = parseInt(lotSize, 10);
+            if (!isNaN(price) && !isNaN(validLotSize)) {
+                const lotValue = validLotSize * price;
+                const infoLi = document.createElement('li');
+                infoLi.className = 'flex flex-space-between';
+                let showLotSize = true;
+
+                function updateContent() {
+                    infoLi.innerHTML = showLotSize
+                        ? `<span class="name">Market Lot</span><span class="nowrap value"><span class="number">${validLotSize}</span></span>`
+                        : `<span class="name">Lot Value</span><span class="nowrap value">₹ <span class="number">${lotValue.toLocaleString('en-IN')}</span></span>`;
+                }
+
+                updateContent();
+                infoLi.addEventListener('click', () => {
+                    showLotSize = !showLotSize;
+                    updateContent();
+                });
+
+                currentPriceLi.insertAdjacentElement('afterend', infoLi);
+            } else {
+                console.error('Invalid price or lot size:', price, lotSize);
+            }
+        }
+    }
+
+    Promise.all([
+        fetchLotSize(stockSymbol, 'NSE').then(toggleDisplay),
+        fetchLotSize(stockSymbol, 'BSE').then(toggleDisplay)
+    ]).catch(err => console.error('Error:', err));
+})();
